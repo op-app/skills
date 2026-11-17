@@ -25,14 +25,23 @@ the user while it waits.
 
 ## Mental model
 
-- `op context` — read-only snapshot of the canvas: nodes, dataframes (name + shape + columns), cell count. **Always run this first** in any new turn so you know what already exists.
+- `op context` — read-only snapshot of the canvas: nodes (id, type, title, group_id), groups (id, name, member node ids), dataframes (name + shape + columns), and notebook cells (id, position, status, first lines of code). **Always run this first** in any new turn so you know what already exists — every id you pass to the commands below comes from here.
 - `op run "<python>"` — execute Python in the project's namespace. No node created. Output goes to stdout. Use for inspection (`df.head()`, `df.dtypes`) or to load/transform data into variables. Variables persist for the rest of the session.
 - `op cell create "<python>"` — execute Python *and* create a notebook cell. Use when the code is worth keeping (data load, key transform) — it survives container sleep and the user can re-run it.
 - `op cell edit <cell_id> "<python>"` — edit an existing cell and re-execute.
+- `op cell delete <cell_id>` — remove a notebook cell. No undo; only on the user's request or to clean up a cell you created.
+- `op cells reorder <cell_id> <cell_id> ...` — put cells in this order; cells you leave out keep their relative order after the listed ones. Every id must exist.
 - `op chart --title T --var df_name --code "Plot.plot(...)"` — create a chart node. The DataFrame `df_name` must exist in the namespace. Charts use Observable Plot.
 - `op table --title T --var df_name` — create a table node from a DataFrame.
 - `op text --title T --content "..."` — create a plain-text label on the canvas.
+- `op chart edit <node_id> [--title T] [--var df_name] [--code "..."]` — change a chart's title, data source or Plot code in place. Pass only what changes.
+- `op table edit <node_id> [--title T] [--var df_name]` — retitle a table or point it at another DataFrame.
+- `op node move <node_id> --x X --y Y` / `op node resize <node_id> --width W --height H` — layout tweaks. Both coordinates (or both dimensions) are required.
+- `op node group <node_id> <group_name>` — put a node in a group, creating the group if needed; `op node group <node_id> ""` ungroups it.
+- `op group create <name>` — create a group (returns the existing one if the name is taken); `op group rename <group_id> <name>`; `op group delete <group_id>` — remove a group, its nodes stay on the canvas ungrouped.
 - `op node delete <node_id>` — remove a canvas node (ids from `op context`). Use this to clean up your own mistakes — a chart that errored, a duplicate — instead of leaving broken artifacts on the user's canvas.
+
+Every edit, move, delete and group change shows up live in the user's open browser tab, the same way the in-app agent's actions do.
 
 For multi-line code, pipe via stdin: `op run -` reads stdin.
 
@@ -65,6 +74,8 @@ link so they can open it in the app.
 - `project_limit` (HTTP 403) → project-count cap. Relay `upgrade_url`.
 - `missing_variable` → the DataFrame named in `--var` doesn't exist. Load it first with `op run` or `op cell create`.
 - `not_a_dataframe` → variable exists but isn't a pandas DataFrame.
+- `node_not_found` / `cell_not_found` / `group_not_found` (HTTP 404) → the id is stale or mistyped. Re-run `op context` and use an id from there.
+- `node_type_mismatch` → you passed chart fields to a table (or vice versa). Check the node's `type` in `op context`.
 - `dataframe_too_large` → chart cap is 5000 rows; aggregate or sample first.
 - `backend_unavailable` (503) / `backend_timeout` (504) → project container cold boot; the CLI already retries with backoff (you'll see "waking project container" on stderr). If it still fails, wait ~30s and try once more.
 - App-level `500` → a real server bug, not a cold boot. Don't blind-retry; surface the error body to the user.
@@ -90,6 +101,16 @@ The companion skills above use Python tool-call syntax (e.g. `create_chart(title
 | `create_text(title=T, content=C)` | `op text --title T --content C` |
 | `create_cell(code=C)` | `op cell create C` (or pipe via `op cell create -`) |
 | `edit_cell(cell_id=ID, new_code=C)` | `op cell edit ID C` |
+| `delete_cell(cell_id=ID)` | `op cell delete ID` |
+| `reorder_cells(cell_order=[A, B])` | `op cells reorder A B` |
+| `edit_chart(node_id=ID, code=C, title=T, data_variable=V)` | `op chart edit ID --code C --title T --var V` |
+| `edit_table(node_id=ID, variable_name=V, title=T)` | `op table edit ID --var V --title T` |
+| `move_node(node_id=ID, x=X, y=Y)` | `op node move ID --x X --y Y` |
+| `resize_node(node_id=ID, width=W, height=H)` | `op node resize ID --width W --height H` |
+| `assign_node_to_group(node_id=ID, group_name=G)` | `op node group ID G` |
+| `upsert_group(name=G)` / `upsert_group(name=G, group_id=ID)` | `op group create G` / `op group rename ID G` |
+| `delete_group(group_id=ID)` | `op group delete ID` |
+| `delete_node(node_id=ID)` | `op node delete ID` |
 | `run_code(code=C)` | `op run C` (or `op run -` from stdin) |
 
 The skills' value is the domain content (chart patterns, analysis recipes, layout conventions) — read them for guidance and translate the call shape.
